@@ -22,7 +22,7 @@ static inline void POKE16(unsigned long addr, unsigned short dat) {
                 : "memory"
         );
 }
-
+/*GG
 static inline unsigned long PEEK32(unsigned long addr) {
         unsigned long ret;
 
@@ -43,7 +43,7 @@ static inline void POKE32(unsigned long addr, unsigned long dat) {
                 : "memory"
         );
 }
-
+*/
 
 static inline unsigned char PEEK8(unsigned long addr) {
         unsigned char ret;

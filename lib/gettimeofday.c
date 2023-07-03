@@ -16,6 +16,7 @@
  * broken implementation for WIN32.
  * FIXME: usec precision
  */
+/*GG
 int gettimeofday(struct timeval *tv, struct timezone *tz)
 {
     if (tv)
@@ -30,3 +31,4 @@ int gettimeofday(struct timeval *tv, struct timezone *tz)
     return 0;
 }
 
+*/

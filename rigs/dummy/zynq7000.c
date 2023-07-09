@@ -49,6 +49,8 @@
 //#define ZYNQ7000_MODES (RIG_MODE_NONE)
 #define ZYNQ7000_MODES (RIG_MODE_AM | RIG_MODE_LSB | RIG_MODE_USB)
 
+#define CMDSLEEP 20*1000  /* ms for each command */
+
 // -----------------------------
 // UIO devices structs
 struct UIO dev_adc_test_switch;
@@ -61,6 +63,7 @@ struct DecimationRate dev_decimation_rate_iq;
 struct zynq7000_priv_data
 {
     vfo_t curr_vfo;
+    channel_t vfo_a;
     char bandwidths[MAXBANDWIDTHLEN]; /* pipe delimited set */
     int nbandwidths;
     char info[8192];
@@ -496,6 +499,121 @@ static int zynq7000_set_freq(RIG *rig, vfo_t vfo, freq_t freq)
     RETURNFUNC(RIG_OK);
 }
 
+static int zynq7000_set_mode(RIG *rig, vfo_t vfo, rmode_t mode, pbwidth_t width)
+{
+    struct zynq7000_priv_data *priv = (struct dummy_priv_data *)rig->state.priv;
+    //channel_t *curr = priv->curr;
+    char buf[16];
+
+    ENTERFUNC;
+    usleep(CMDSLEEP);
+    sprintf_freq(buf, sizeof(buf), width);
+    rig_debug(RIG_DEBUG_VERBOSE, "%s called: %s %s %s\n", __func__,
+              rig_strvfo(vfo), rig_strrmode(mode), buf);
+
+/*
+    vfo = vfo_fixup(rig, vfo, rig->state.cache.split);
+
+    if (width == RIG_PASSBAND_NOCHANGE)
+    {
+            switch (vfo)
+            {
+            case RIG_VFO_MAIN:
+            case RIG_VFO_A: width = priv->vfo_a.width; break;
+
+            case RIG_VFO_SUB:
+            case RIG_VFO_B: width = priv->vfo_b.width; break;
+
+            case RIG_VFO_C: width = priv->vfo_c.width; break;
+            }
+    }
+
+    switch (vfo)
+    {
+    case RIG_VFO_MAIN:
+    case RIG_VFO_A: priv->vfo_a.mode = mode; priv->vfo_a.width = width; break;
+
+    case RIG_VFO_SUB:
+    case RIG_VFO_B: priv->vfo_b.mode = mode; priv->vfo_b.width = width; break;
+
+    case RIG_VFO_C: priv->vfo_c.mode = mode; priv->vfo_c.width = width; break;
+
+    default:
+            rig_debug(RIG_DEBUG_ERR, "%s: unknown VFO=%s\n", __func__, rig_strvfo(vfo));
+            RETURNFUNC(-RIG_EINVAL);
+    }
+
+    vfo = vfo_fixup(rig, vfo, rig->state.cache.split);
+
+    if (RIG_PASSBAND_NOCHANGE == width) { RETURNFUNC(RIG_OK); }
+
+    if (width == RIG_PASSBAND_NORMAL)
+    {
+            width = curr->width = rig_passband_normal(rig, mode);
+    }
+
+    switch (vfo)
+    {
+    case RIG_VFO_A: priv->vfo_a.width = width; break;
+
+    case RIG_VFO_B: priv->vfo_b.width = width; break;
+
+    case RIG_VFO_C: priv->vfo_c.width = width; break;
+    }
+*/
+    // Set AM USB or LSB
+    switch(mode){
+    case RIG_MODE_AM:
+        AMSSBSwitch_SetAM(&dev_am_ssb_switch);
+            break;
+    case RIG_MODE_USB:
+        AMSSBSwitch_SetUSB(&dev_am_ssb_switch);
+        break;
+    case RIG_MODE_LSB:
+        AMSSBSwitch_SetLSB(&dev_am_ssb_switch);
+        break;
+    }
+
+    // set bandwidth
+    if(width <=3000){
+        width = 2000;
+        DecimationRate_SetBandwidth(&dev_decimation_rate_iq,"2");
+    }else if(width < 5000){
+        width = 4000;
+        DecimationRate_SetBandwidth(&dev_decimation_rate_iq,"4");
+    }else if(width < 12000){
+        width = 8000;
+        DecimationRate_SetBandwidth(&dev_decimation_rate_iq,"8");
+    }else if(width < 24000){
+        width = 16000;
+        DecimationRate_SetBandwidth(&dev_decimation_rate_iq,"16");
+    }else{
+        width = 30000;
+        DecimationRate_SetBandwidth(&dev_decimation_rate_iq,"30");
+    }
+    priv->vfo_a.mode = mode;
+    priv->vfo_a.width = width;
+
+    RETURNFUNC(RIG_OK);
+}
+
+
+static int zynq7000_get_mode(RIG *rig, vfo_t vfo, rmode_t *mode, pbwidth_t *width)
+{
+    struct zynq7000_priv_data *priv = (struct zynq7000_priv_data *)rig->state.priv;
+
+    ENTERFUNC;
+    usleep(CMDSLEEP);
+    rig_debug(RIG_DEBUG_VERBOSE, "%s called: %s\n", __func__, rig_strvfo(vfo));
+
+    *mode = priv->vfo_a.mode;
+    *width = priv->vfo_a.width;
+
+    RETURNFUNC(RIG_OK);
+}
+
+
+
 /*
 * zynq7000_get_vfo
 * assumes rig!=NULL, vfo != NULL
@@ -647,5 +765,9 @@ struct rig_caps zynq7000_caps =
     .get_vfo = zynq7000_get_vfo,
     .set_freq = zynq7000_set_freq,
     .get_freq = zynq7000_get_freq,
+
+    .get_mode = zynq7000_get_mode,
+    .set_mode = zynq7000_set_mode,
+
     .hamlib_check_rig_caps = HAMLIB_CHECK_RIG_CAPS
 };

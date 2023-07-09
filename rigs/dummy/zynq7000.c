@@ -323,8 +323,6 @@ static int zynq7000_get_freq(RIG *rig, vfo_t vfo, freq_t *freq)
         RETURNFUNC(retval);
     }
 
-    *freq = MHz(16);
-
     sscanf(value, "%lf", freq);
 
     if (*freq == 0)

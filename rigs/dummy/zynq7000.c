@@ -550,6 +550,7 @@ static int zynq7000_init(RIG *rig)
     priv->curr_widthA = 4000;
     priv->curr_widthB = -1;
     priv->curr_freqA = MHz(16);
+    priv->curr_vfo = 0;
 
     // Init UIO devices
     strcpy(dev_adc_test_switch.devuio, DEV_ADC_TEST_SWITCH);

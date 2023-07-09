@@ -311,7 +311,9 @@ static int zynq7000_get_freq(RIG *rig, vfo_t vfo, freq_t *freq)
     int retval;
 
     //GG retval = zynq7000_transaction(rig, cmd, value, sizeof(value));
+    *freq = dev_dds_lo.current_freq_hz;
     printf("zynq7000_get_freq: rig model=%s vfo=%d freq=%lf\r\n",rig->caps->model_name, vfo, *freq);
+
     retval = RIG_OK;
 
     if (retval != RIG_OK)

@@ -220,7 +220,7 @@ static int write_transaction(RIG *rig, char *xml, int xml_len)
 
     RETURNFUNC(retval);
 }
-
+/*
 static int zynq7000_transaction(RIG *rig, char *cmd, char *value,
                                 int value_len)
 {
@@ -280,7 +280,7 @@ static int zynq7000_transaction(RIG *rig, char *cmd, char *value,
     set_transaction_inactive(rig);
     RETURNFUNC(RIG_OK);
 }
-
+*/
 
 /*
 * zynq7000_get_freq
@@ -310,7 +310,7 @@ static int zynq7000_get_freq(RIG *rig, vfo_t vfo, freq_t *freq)
                   __func__, rig_strvfo(vfo));
     }
 
-    char *cmd = "f\n";
+    //char *cmd = "f\n";
     int retval;
 
     //GG retval = zynq7000_transaction(rig, cmd, value, sizeof(value));
@@ -444,9 +444,9 @@ static int zynq7000_cleanup(RIG *rig)
 */
 static int zynq7000_set_freq(RIG *rig, vfo_t vfo, freq_t freq)
 {
-    int retval;
+    //int retval;
     char cmd[MAXARGLEN];
-    char value[1024];
+    //char value[1024];
 
     //struct zynq7000_priv_data *priv = (struct zynq7000_priv_data *) rig->state.priv;
 
@@ -489,10 +489,10 @@ static int zynq7000_set_freq(RIG *rig, vfo_t vfo, freq_t freq)
     }
 
     DDS_SetFreq(&dev_dds_bfo, freqBFO);
-    rig_debug(RIG_DEBUG_TRACE,"zynq7000_set_freq: BFO frequency=%lf\r\n", freqBFO);
+    rig_debug(RIG_DEBUG_TRACE,"zynq7000_set_freq: BFO frequency=%d\r\n", freqBFO);
 
     DDS_SetFreq(&dev_dds_lo, freqLO);
-    rig_debug(RIG_DEBUG_TRACE,"zynq7000_set_freq: LO frequency=%lf\r\n", freqLO);
+    rig_debug(RIG_DEBUG_TRACE,"zynq7000_set_freq: LO frequency=%d\r\n", freqLO);
 
     //sscanf(value, "RPRT %d", &retval);
     //RETURNFUNC2(retval);

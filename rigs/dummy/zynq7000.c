@@ -29,7 +29,6 @@
 #include <unistd.h>
 
 #include "uio_c.h"
-#include "zynq7000.h"
 
 #define DEBUG 1
 #define DEBUG_TRACE DEBUG_VERBOSE
@@ -669,6 +668,7 @@ static int zynq7000_init(RIG *rig)
     priv->curr_widthB = -1;
     priv->curr_freqA = MHz(16);
     priv->curr_vfo = 1;
+    priv->vfo_a.split = RIG_SPLIT_OFF;
 
     // Init UIO devices
     strcpy(dev_adc_test_switch.devuio, DEV_ADC_TEST_SWITCH);
@@ -728,7 +728,7 @@ struct rig_caps zynq7000_caps =
     .status = RIG_STATUS_STABLE,
     .rig_type = RIG_TYPE_COMPUTER,
     //.targetable_vfo =  RIG_TARGETABLE_FREQ | RIG_TARGETABLE_MODE,
-    .ptt_type = RIG_PTT_RIG,
+    .ptt_type = RIG_PTT_NONE,
     .port_type = RIG_PORT_NONE,
     .write_delay = 0,
     .post_write_delay = 0,

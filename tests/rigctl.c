@@ -152,6 +152,8 @@ int main(int argc, char *argv[])
     char vbuf[1024];
     rig_powerstat = RIG_POWER_ON; // defaults to power on
 
+    printf("that's me!\r\n");
+
     int err = setvbuf(stderr, vbuf, _IOFBF, sizeof(vbuf));
 
     if (err) { rig_debug(RIG_DEBUG_ERR, "%s: setvbuf err=%s\n", __func__, strerror(err)); }

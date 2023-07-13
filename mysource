@@ -1,0 +1,5 @@
+#!/bin/bash
+source /opt/petalinux/2022.2/environment-setup-cortexa9t2hf-neon-xilinx-linux-gnueabi
+./configure CFLAGS="-g -O0" --host=arm-xilinx-linux-gnueabi --build=x86_64-linux-gnu
+make
+

@@ -118,7 +118,6 @@ void ADCTestSwitch_SetTestGen(struct UIO * uio){
 int AMSSBSwitch_Init(struct UIO * uio) {
     return uio_init(uio);
 }
-
 void AMSSBSwitch_SetAM(struct UIO * uio){
     uio_writeData32(uio, 0x00000002, 0);
 }
@@ -127,6 +126,113 @@ void AMSSBSwitch_SetUSB(struct UIO * uio){
 }
 void AMSSBSwitch_SetLSB(struct UIO * uio){
     uio_writeData32(uio, 0x00000001, 0);
+}
+//********************************************************************
+// Manage the AD9851 DDS Sinusoidal generator
+//********************************************************************
+int AD9851_Init(struct AD9851 * ad9851, float master_clock_hz_){
+    ad9851->master_clock_hz = master_clock_hz_;
+    int ret_uio    = uio_init( &(ad9851->uio));
+    int ret_6x     = AD9851_Set6X(ad9851);
+    int ret_setoff = AD9851_SetOff(ad9851);
+    int ret_freq   = AD9851_SetFreq(ad9851, 10000000.0); // 10MHz
+    int ret_phase  = AD9851_SetPhase_0_31(ad9851, 0);         // 0 phase shift
+    return ret_uio | (ret_6x << 1) | (ret_setoff << 2) | (ret_freq << 3) | (ret_phase << 4);
+}
+
+float AD9851_SetFreq(struct AD9851 * ad9851, float freq_hz){
+    //calculate phase increment from specified frequency
+    uint32_t pinc = (uint32_t) (0.5 + freq_hz * pow(2, 32) / ad9851->master_clock_hz );
+
+    // send phase increment to AD9851
+    int ret = uio_writeData32(&(ad9851->uio), pinc,0);
+    if(ret == 1)
+        printf("error writing frequency to AD9851\r\n");
+
+    // set bit 16 (valid) to 1 and then back to 0 at offset 8
+    uint32_t write_instruction = 0x00010000 | uio_readData32(&(ad9851->uio),8);     // set bit 16 to 1
+    ret = uio_writeData32(&(ad9851->uio), write_instruction, 8);
+    if(ret == 1)
+        printf("error setting bit 16 (valid) to 1 on AD9851\r\n");
+    write_instruction = write_instruction & 0xFFFFEFFF;                             // set bit 16 to 0
+    ret = uio_writeData32(&(ad9851->uio), write_instruction, 8);     // second: clear complete instruction
+    if(ret == 1)
+        printf("error setting bit 16 (valid) to 0 on AD9851\r\n");
+
+    // recalculate real set frequency
+    ad9851->current_freq_hz = pinc * ad9851->master_clock_hz / pow(2,32);
+    return ad9851->current_freq_hz;
+}
+
+int AD9851_Set6X(struct AD9851 * ad9851){
+
+    // set bit 0 to 1 at offset 8 which corresponds to bit 32 (6X) on 40 bits ad9851 programming word
+    uint32_t write_instruction = 0x00000001 | uio_readData32(&(ad9851->uio),8);     // set bit 16 to 1
+    int ret = uio_writeData32(&(ad9851->uio), write_instruction, 8);
+    if(ret == 1)
+        printf("error setting 6X bit on AD9851\r\n");
+
+    return ret;
+}
+
+int AD9851_SetOn(struct AD9851 * ad9851){
+
+    // set bit 2 to 0 at offset 8 which corresponds to bit 34 (power down) on 40 bits ad9851 programming word
+    uint32_t write_instruction = 0xFFFFFFFB & uio_readData32(&(ad9851->uio),8);     // set bit 2 to 0
+    int ret = uio_writeData32(&(ad9851->uio), write_instruction, 8);
+    if(ret == 1)
+        printf("error setting power down bit to 0 on AD9851\r\n");
+
+    return ret;
+}
+
+int AD9851_SetOff(struct AD9851 * ad9851){
+
+    // set bit 2 to 1 at offset 8 which corresponds to bit 34 (power down) on 40 bits ad9851 programming word
+    uint32_t write_instruction = 0x00000002 | uio_readData32(&(ad9851->uio),8);     // set bit 2 to 1
+    int ret = uio_writeData32(&(ad9851->uio), write_instruction, 8);
+    if(ret == 1)
+        printf("error setting power down bit to 1 on AD9851\r\n");
+
+    return ret;
+}
+
+int AD9851_SetPhase_0_31(struct AD9851 * ad9851, u_int32_t phase_0_31){
+
+    // send phase shift to AD9851
+    phase_0_31 = phase_0_31 & 0x0000001F; // 5 bits coding
+    uint32_t write_instruction = uio_readData32(&(ad9851->uio),8);     // set bit 16 to 1
+    write_instruction = (write_instruction & 0xFFFFFFE0) | phase_0_31;
+    int ret = uio_writeData32(&(ad9851->uio), write_instruction,8);
+    if(ret == 1)
+        printf("error writing phase shift to AD9851\r\n");
+
+    // set bit 16 (valid) to 1 and then back to 0 at offset 8
+    write_instruction = 0x00010000 | uio_readData32(&(ad9851->uio),8);     // set bit 16 to 1
+    ret = uio_writeData32(&(ad9851->uio), write_instruction, 8);
+    if(ret == 1)
+        printf("error setting bit 16 (valid) to 0 on AD9851\r\n");
+    write_instruction = write_instruction & 0xFFFEFFFF;                    // set bit 16 to 0
+    ret = uio_writeData32(&(ad9851->uio), write_instruction, 8);
+    if(ret == 1)
+        printf("error setting bit 16 (valid) to 0 on AD9851\r\n");
+
+    // recalculate real set frequency
+    ad9851->phase_shift_0_31 = phase_0_31;
+    return ad9851->phase_shift_0_31;
+}
+
+int AD9851_SetAmplitude_0_255(struct AD9851 * ad9851, u_int32_t amplitude_0_255){
+
+    // set amplitude for to AD9851. The AD9851_AM will output a PWM signal with duty cycle 0(0%)-255(100%)
+    amplitude_0_255 = amplitude_0_255 & 0x000000FF; // 8 bits coding
+    uint32_t write_instruction = uio_readData32(&(ad9851->uio),8);
+    write_instruction = (write_instruction & 0xFFFFFF00) | amplitude_0_255;
+    int ret = uio_writeData32(&(ad9851->uio), write_instruction,8);
+    if(ret == 1)
+        printf("error writing PWM amplitude for AD9851\r\n");
+
+    return ret;
 }
 //********************************************************************
 // Manage a Direct Digital Synthesizer (Local Oscillator or Test Generator)

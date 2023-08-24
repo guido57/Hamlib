@@ -30,6 +30,8 @@
 
 #include "uio_c.h"
 
+#define NB_CHAN 22      /* see caps->chan_list */
+
 #define DEBUG 1
 #define DEBUG_TRACE DEBUG_VERBOSE
 #define TRUE 1
@@ -52,6 +54,7 @@
 
 // -----------------------------
 // UIO devices structs
+struct AD9851 dev_ad9851;
 struct UIO dev_adc_test_switch;
 struct UIO dev_am_ssb_switch;
 struct DDS dev_dds_lo;
@@ -62,12 +65,29 @@ struct DecimationRate dev_decimation_rate_iq;
 struct zynq7000_priv_data
 {
     vfo_t curr_vfo;
-    channel_t vfo_a;
+    vfo_t last_vfo;/* VFO A or VFO B, when in MEM mode */
     char bandwidths[MAXBANDWIDTHLEN]; /* pipe delimited set */
     int nbandwidths;
     char info[8192];
-    ptt_t ptt;
+
     split_t split;
+    vfo_t tx_vfo;
+    ptt_t ptt;
+
+    int trn;
+    channel_t *curr;    /* points to vfo_a, vfo_b or mem[] */
+
+    // we're trying to emulate all sorts of vfo possibilities so this looks redundant
+    channel_t vfo_a;
+    channel_t vfo_b;
+    channel_t vfo_c;
+    channel_t vfo_maina;
+    channel_t vfo_mainb;
+    channel_t vfo_suba;
+    channel_t vfo_subb;
+    channel_t mem[NB_CHAN];
+
+
     rmode_t curr_modeA;
     rmode_t curr_modeB;
     freq_t curr_freqA;
@@ -80,6 +100,7 @@ struct zynq7000_priv_data
     float powermeter_scale;  /* So we can scale power meter to 0-1 */
     value_t parms[RIG_SETTING_MAX];
     struct ext_list *ext_parms;
+
 };
 
 /*
@@ -619,12 +640,175 @@ static int zynq7000_get_mode(RIG *rig, vfo_t vfo, rmode_t *mode, pbwidth_t *widt
 */
 static int zynq7000_get_vfo(RIG *rig, vfo_t *vfo)
 {
+
     ENTERFUNC;
 
     *vfo = RIG_VFO_A;
 
+    printf("zynq7000_get_vfo: rig name=%s vfo=%d \r\n",rig->caps->model_name, vfo);
     RETURNFUNC(RIG_OK);
 }
+
+static int zynq7000_set_vfo(RIG *rig, vfo_t vfo)
+{
+
+    printf("zynq7000_set_vfo: rig name=%s vfo=%d \r\n",rig->caps->model_name, vfo);
+
+    struct zynq7000_priv_data *priv = (struct zynq7000_priv_data *)rig->state.priv;
+    channel_t *curr = priv->curr;
+
+    ENTERFUNC;
+    usleep(CMDSLEEP);
+    rig_debug(RIG_DEBUG_VERBOSE, "%s called: %s\n", __func__, rig_strvfo(vfo));
+
+    if (vfo == RIG_VFO_CURR) { vfo = rig->state.current_vfo; }
+
+    priv->last_vfo = priv->curr_vfo;
+    priv->curr_vfo = vfo;
+
+    switch (vfo)
+    {
+    case RIG_VFO_VFO: /* FIXME */
+
+    case RIG_VFO_RX:
+    case RIG_VFO_MAIN: priv->curr = &priv->vfo_a; break;
+
+    case RIG_VFO_MAIN_A: priv->curr = &priv->vfo_maina; break;
+
+    case RIG_VFO_MAIN_B: priv->curr = &priv->vfo_mainb; break;
+
+    case RIG_VFO_A: priv->curr = &priv->vfo_a; break;
+
+    case RIG_VFO_SUB: priv->curr = &priv->vfo_b; break;
+
+    case RIG_VFO_SUB_A: priv->curr = &priv->vfo_suba; break;
+
+    case RIG_VFO_SUB_B: priv->curr = &priv->vfo_subb; break;
+
+    case RIG_VFO_B: priv->curr = &priv->vfo_b; break;
+
+    case RIG_VFO_C: priv->curr = &priv->vfo_c; break;
+
+    case RIG_VFO_MEM:
+        if (curr->channel_num >= 0 && curr->channel_num < NB_CHAN)
+        {
+                priv->curr = &priv->mem[curr->channel_num];
+                break;
+        }
+
+    case RIG_VFO_TX:
+        if (priv->tx_vfo == RIG_VFO_A) { priv->curr = &priv->vfo_a; }
+        else if (priv->tx_vfo == RIG_VFO_B) { priv->curr = &priv->vfo_b; }
+        else if (priv->tx_vfo == RIG_VFO_MEM) { priv->curr = &priv->mem[curr->channel_num]; }
+        else { priv->curr = &priv->vfo_a; }
+
+        break;
+
+    default:
+        rig_debug(RIG_DEBUG_VERBOSE, "%s unknown vfo: %s\n", __func__,
+                  rig_strvfo(vfo));
+        RETURNFUNC(-RIG_EINVAL);
+    }
+
+    rig->state.current_vfo = vfo;
+
+    RETURNFUNC(RIG_OK);
+}
+
+
+static int zynq7000_set_ptt(RIG *rig, vfo_t vfo, ptt_t ptt)
+{
+    struct zynq7000_priv_data *priv = (struct zynq7000_priv_data *)rig->state.priv;
+
+    ENTERFUNC;
+    priv->ptt = ptt;
+
+    printf("zynq7000_set_ptt: rig name=%s vfo=%d ptt=%d\r\n",rig->caps->model_name, vfo);
+
+    RETURNFUNC(RIG_OK);
+}
+
+
+static int zynq7000_get_ptt(RIG *rig, vfo_t vfo, ptt_t *ptt)
+{
+    struct zynq7000_priv_data *priv = (struct zynq7000_priv_data *)rig->state.priv;
+    int rc;
+    int status = 0;
+
+    ENTERFUNC;
+    usleep(CMDSLEEP);
+
+    // sneak a look at the hardware PTT and OR that in with our result
+    // as if it had keyed us
+    /*
+    switch (rig->state.pttport.type.ptt)
+    {
+    case RIG_PTT_SERIAL_DTR:
+        if (rig->state.pttport.fd >= 0)
+        {
+                if (RIG_OK != (rc = ser_get_dtr(&rig->state.pttport, &status))) { RETURNFUNC(rc); }
+
+                *ptt = status ? RIG_PTT_ON : RIG_PTT_OFF;
+        }
+        else
+        {
+                *ptt = RIG_PTT_OFF;
+        }
+
+        break;
+
+    case RIG_PTT_SERIAL_RTS:
+        if (rig->state.pttport.fd >= 0)
+        {
+                if (RIG_OK != (rc = ser_get_rts(&rig->state.pttport, &status))) { RETURNFUNC(rc); }
+
+                *ptt = status ? RIG_PTT_ON : RIG_PTT_OFF;
+        }
+        else
+        {
+                *ptt = RIG_PTT_OFF;
+        }
+
+        break;
+
+    case RIG_PTT_PARALLEL:
+        if (rig->state.pttport.fd >= 0)
+        {
+                if (RIG_OK != (rc = par_ptt_get(&rig->state.pttport, ptt))) { RETURNFUNC(rc); }
+        }
+
+        break;
+
+    case RIG_PTT_CM108:
+        if (rig->state.pttport.fd >= 0)
+        {
+                if (RIG_OK != (rc = cm108_ptt_get(&rig->state.pttport, ptt))) { RETURNFUNC(rc); }
+        }
+
+        break;
+
+    case RIG_PTT_GPIO:
+    case RIG_PTT_GPION:
+        if (rig->state.pttport.fd >= 0)
+        {
+                if (RIG_OK != (rc = gpio_ptt_get(&rig->state.pttport, ptt))) { RETURNFUNC(rc); }
+        }
+
+        break;
+
+    default:
+        *ptt = priv->ptt;
+        break;
+    }
+    */
+    *ptt = priv->ptt;
+
+    printf("zynq7000_get_ptt: rig name=%s vfo=%d ptt=%d\r\n",rig->caps->model_name, vfo, *ptt);
+
+    RETURNFUNC(RIG_OK);
+}
+
+
 
 /*
 * zynq7000_init
@@ -671,6 +855,9 @@ static int zynq7000_init(RIG *rig)
     priv->vfo_a.split = RIG_SPLIT_OFF;
 
     // Init UIO devices
+    strcpy(dev_ad9851.uio.devuio, DEV_AD9851);
+    AD9851_Init(&dev_ad9851,180000000.0);
+
     strcpy(dev_adc_test_switch.devuio, DEV_ADC_TEST_SWITCH);
     ADCTestSwitch_Init(&dev_adc_test_switch);
 
@@ -728,7 +915,7 @@ struct rig_caps zynq7000_caps =
     .status = RIG_STATUS_STABLE,
     .rig_type = RIG_TYPE_COMPUTER,
     //.targetable_vfo =  RIG_TARGETABLE_FREQ | RIG_TARGETABLE_MODE,
-    .ptt_type = RIG_PTT_NONE,
+    .ptt_type = RIG_PTT_RIG,
     .port_type = RIG_PORT_NONE,
     .write_delay = 0,
     .post_write_delay = 0,
@@ -762,12 +949,16 @@ struct rig_caps zynq7000_caps =
     .rig_close = zynq7000_close,
     .rig_cleanup = zynq7000_cleanup,
 
+    .set_vfo = zynq7000_set_vfo,
     .get_vfo = zynq7000_get_vfo,
     .set_freq = zynq7000_set_freq,
     .get_freq = zynq7000_get_freq,
 
     .get_mode = zynq7000_get_mode,
     .set_mode = zynq7000_set_mode,
+
+    .set_ptt = zynq7000_set_ptt,
+    .get_ptt = zynq7000_get_ptt,
 
     .hamlib_check_rig_caps = HAMLIB_CHECK_RIG_CAPS
 };

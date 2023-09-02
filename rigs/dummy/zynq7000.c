@@ -52,6 +52,8 @@
 
 #define CMDSLEEP 20*1000  /* ms for each command */
 
+static int zynq7000_get_freq(RIG *rig, vfo_t vfo, freq_t *freq);
+
 // -----------------------------
 // UIO devices structs
 struct AD9851 dev_ad9851;
@@ -87,7 +89,6 @@ struct zynq7000_priv_data
     channel_t vfo_subb;
     channel_t mem[NB_CHAN];
 
-
     rmode_t curr_modeA;
     rmode_t curr_modeB;
     freq_t curr_freqA;
@@ -100,7 +101,6 @@ struct zynq7000_priv_data
     float powermeter_scale;  /* So we can scale power meter to 0-1 */
     value_t parms[RIG_SETTING_MAX];
     struct ext_list *ext_parms;
-
 };
 
 /*
@@ -129,249 +129,94 @@ static int check_vfo(vfo_t vfo)
 }
 
 /*
-* read_transaction
-* Assumes rig!=NULL, xml!=NULL, xml_len>=MAXXMLLEN
+* zynq7000_init
+* Assumes rig!=NULL
 */
-static int read_transaction(RIG *rig, char *xml, int xml_len)
+static int zynq7000_init(RIG *rig)
 {
-    int retval;
-    int retry;
-    char *delims;
-    char *terminator = "\n";
-    struct rig_state *rs = &rig->state;
+    struct zynq7000_priv_data *priv;
 
     ENTERFUNC;
+    rig_debug(RIG_DEBUG_TRACE, "%s version %s\n", __func__, rig->caps->version);
 
-    retry = 2;
-    delims = "\n";
-    xml[0] = 0;
+    rig->state.priv  = (struct zynq7000_priv_data *)calloc(1, sizeof(
+                                                                  struct zynq7000_priv_data));
 
-    do
+    if (!rig->state.priv)
     {
-        char tmp_buf[MAXXMLLEN];        // plenty big for expected sdrsharp responses hopefully
-
-        if (retry < 2)
-        {
-            rig_debug(RIG_DEBUG_WARN, "%s: retry needed? retry=%d\n", __func__, retry);
-        }
-
-        int len = read_string(&rs->rigport, (unsigned char *) tmp_buf, sizeof(tmp_buf),
-                              delims,
-                              strlen(delims), 0, 1);
-
-        if (len > 0) { retry = 3; }
-
-        if (len <= 0)
-        {
-            rig_debug(RIG_DEBUG_ERR, "%s: read_string error=%d\n", __func__, len);
-            continue;
-        }
-
-        if (strlen(xml) + strlen(tmp_buf) < xml_len - 1)
-        {
-            strncat(xml, tmp_buf, xml_len - 1);
-        }
-        else
-        {
-            rig_debug(RIG_DEBUG_ERR,
-                      "%s: xml buffer overflow!!\nTrying to add len=%d\nTo len=%d\n", __func__,
-                      (int)strlen(tmp_buf), (int)strlen(xml));
-            RETURNFUNC(-RIG_EPROTO);
-        }
-    }
-    while (retry-- > 0 && strstr(xml, terminator) == NULL);
-
-    if (retry == 0)
-    {
-        rig_debug(RIG_DEBUG_WARN, "%s: retry timeout\n", __func__);
-        RETURNFUNC(-RIG_ETIMEOUT);
+            RETURNFUNC(-RIG_ENOMEM);
     }
 
-    if (strstr(xml, terminator))
+    priv = rig->state.priv;
+
+    memset(priv, 0, sizeof(struct zynq7000_priv_data));
+    memset(priv->parms, 0, RIG_SETTING_MAX * sizeof(value_t));
+
+    /*
+     * set arbitrary initial status
+     */
+    rig->state.current_vfo = RIG_VFO_A;
+    priv->split = 0;
+    priv->ptt = 0;
+    priv->curr_modeA = -1;
+    priv->curr_modeB = -1;
+    //priv->curr_widthA = -1;
+    // set initial bandwith
+    priv->curr_widthA = 4000;
+    priv->curr_widthB = -1;
+    priv->curr_freqA = MHz(16);
+    priv->curr_vfo = 1;
+    priv->vfo_a.split = RIG_SPLIT_OFF;
+
+    // Init UIO devices
+    strcpy(dev_ad9851.uio.devuio, DEV_AD9851);
+    AD9851_Init(&dev_ad9851,180000000.0);
+
+    strcpy(dev_adc_test_switch.devuio, DEV_ADC_TEST_SWITCH);
+    ADCTestSwitch_Init(&dev_adc_test_switch);
+
+    strcpy(dev_am_ssb_switch.devuio, DEV_AM_SSB);
+    AMSSBSwitch_Init(&dev_am_ssb_switch);
+
+    strcpy(dev_dds_lo.uio.devuio, DEV_DDS_LO);
+    dev_dds_lo.b_phase_width = 26;
+    dev_dds_lo.master_clock_hz = 64000000;
+    DDS_Init(&dev_dds_lo);
+
+    strcpy(dev_dds_bfo.uio.devuio, DEV_DDS_BFO);
+    dev_dds_bfo.b_phase_width = 26;
+    dev_dds_bfo.master_clock_hz = 64000000;
+    DDS_Init(&dev_dds_bfo);
+
+    strcpy(dev_if_filter_gain.uio.devuio, DEV_IF_GAIN);
+    FilterGain_init(&dev_if_filter_gain);
+
+    strcpy(dev_decimation_rate_iq.uio.devuio, DEV_DEC_RATE_IQ);
+    DecimationRate_Init(&dev_decimation_rate_iq);
+
+    // set the initial mode to USB
+    //AMSSBSwitch_SetUSB(&dev_am_ssb_switch);
+
+    // set the bandwidth to 4KHz
+    //DecimationRate_SetBandwidth(&dev_decimation_rate_iq, "4");
+
+    // set the BFO to 4KHz
+    //DDS_SetFreq(&dev_dds_bfo, 4000);
+
+
+    // set the initial frequency
+    //zynq7000_set_freq(rig, priv->curr_vfo, priv->curr_freqA);
+
+    if (!rig->caps)
     {
-//        rig_debug(RIG_DEBUG_TRACE, "%s: got %s\n", __func__, terminator);
-        retval = RIG_OK;
-    }
-    else
-    {
-        rig_debug(RIG_DEBUG_VERBOSE, "%s: did not get %s\n", __func__, terminator);
-        retval = -(101 + RIG_EPROTO);
-    }
-
-    RETURNFUNC(retval);
-}
-
-/*
-* write_transaction
-* Assumes rig!=NULL, xml!=NULL, xml_len=total size of xml for response
-*/
-static int write_transaction(RIG *rig, char *xml, int xml_len)
-{
-
-    int try = rig->caps->retry;
-
-    int retval = -RIG_EPROTO;
-
-    struct rig_state *rs = &rig->state;
-
-    ENTERFUNC;
-
-    // This shouldn't ever happen...but just in case
-    // We need to avoid an empty write as rigctld replies with blank line
-    if (xml_len == 0)
-    {
-        rig_debug(RIG_DEBUG_ERR, "%s: len==0??\n", __func__);
-        RETURNFUNC(retval);
-    }
-
-    // appears we can lose sync if we don't clear things out
-    // shouldn't be anything for us now anyways
-    rig_flush(&rig->state.rigport);
-
-    while (try-- >= 0 && retval != RIG_OK)
-        {
-            retval = write_block(&rs->rigport, (unsigned char *) xml, strlen(xml));
-
-            if (retval  < 0)
-            {
-                RETURNFUNC(-RIG_EIO);
-            }
-        }
-
-    RETURNFUNC(retval);
-}
-/*
-static int zynq7000_transaction(RIG *rig, char *cmd, char *value,
-                                int value_len)
-{
-    char xml[MAXXMLLEN];
-    int retry = 3;
-
-    ENTERFUNC;
-    ELAPSED1;
-
-    set_transaction_active(rig);
-
-    if (value)
-    {
-        value[0] = 0;
+            RETURNFUNC(-RIG_EINVAL);
     }
 
-    do
-    {
-        int retval;
-
-        if (retry != 3)
-        {
-            rig_debug(RIG_DEBUG_VERBOSE, "%s: cmd=%s, retry=%d\n", __func__, cmd, retry);
-        }
-
-        retval = write_transaction(rig, cmd, strlen(cmd));
-
-        if (retval != RIG_OK)
-        {
-            rig_debug(RIG_DEBUG_ERR, "%s: write_transaction error=%d\n", __func__, retval);
-
-            // if we get RIG_EIO the socket has probably disappeared
-            // so bubble up the error so port can re re-opened
-            if (retval == -RIG_EIO) { set_transaction_inactive(rig); RETURNFUNC(retval); }
-
-            hl_usleep(50 * 1000); // 50ms sleep if error
-        }
-
-        if (value)
-        {
-            read_transaction(rig, xml, sizeof(xml));    // this might time out -- that's OK
-        }
-
-        if (value) { strncpy(value, xml, value_len); }
-
-    }
-    while (((value && strlen(value) == 0))
-            && retry--); // we'll do retries if needed
-
-    if (value && strlen(value) == 0)
-    {
-        rig_debug(RIG_DEBUG_ERR, "%s: no value returned\n", __func__);
-        set_transaction_inactive(rig); RETURNFUNC(RIG_EPROTO);
-    }
-
-    ELAPSED2;
-    set_transaction_inactive(rig);
-    RETURNFUNC(RIG_OK);
-}
-*/
-
-/*
-* zynq7000_get_freq
-* Assumes rig!=NULL, rig->state.priv!=NULL, freq!=NULL
-*/
-static int zynq7000_get_freq(RIG *rig, vfo_t vfo, freq_t *freq)
-{
-    char value[MAXARGLEN];
-    struct zynq7000_priv_data *priv = (struct zynq7000_priv_data *) rig->state.priv;
-
-    ENTERFUNC;
-    rig_debug(RIG_DEBUG_TRACE, "%s: vfo=%s\n", __func__,
-              rig_strvfo(vfo));
-
-
-    if (check_vfo(vfo) == FALSE)
-    {
-        rig_debug(RIG_DEBUG_ERR, "%s: unsupported VFO %s\n",
-                  __func__, rig_strvfo(vfo));
-        RETURNFUNC(-RIG_EINVAL);
-    }
-
-    if (vfo == RIG_VFO_CURR)
-    {
-        vfo = rig->state.current_vfo;
-        rig_debug(RIG_DEBUG_TRACE, "%s: get_freq2 vfo=%s\n",
-                  __func__, rig_strvfo(vfo));
-    }
-
-    //char *cmd = "f\n";
-    int retval;
-
-    //GG retval = zynq7000_transaction(rig, cmd, value, sizeof(value));
-    *freq = dev_dds_lo.current_freq_hz;
-    printf("zynq7000_get_freq: rig model=%s vfo=%d freq=%lf\r\n",rig->caps->model_name, vfo, *freq);
-
-    retval = RIG_OK;
-
-    if (retval != RIG_OK)
-    {
-        rig_debug(RIG_DEBUG_ERR, "%s: READBMF failed retval=%s\n", __func__,
-                  rigerror(retval));
-        RETURNFUNC(retval);
-    }
-
-    sscanf(value, "%lf", freq);
-
-    if (*freq == 0)
-    {
-        rig_debug(RIG_DEBUG_ERR, "%s: freq==0??\nvalue=%s\n", __func__,
-                  value);
-        RETURNFUNC(-RIG_EPROTO);
-
-    }
-    else
-    {
-        rig_debug(RIG_DEBUG_TRACE, "%s: freq=%.0f\n", __func__, *freq);
-    }
-
-    if (vfo == RIG_VFO_A)
-    {
-        priv->curr_freqA = *freq;
-    }
-    else // future support in zynq7000 maybe?
-    {
-        priv->curr_freqB = *freq;
-    }
+    //strncpy(rig->state.rigport.pathname, DEFAULTPATH,
+    //        sizeof(rig->state.rigport.pathname));
 
     RETURNFUNC(RIG_OK);
 }
-
 
 
 /*
@@ -457,130 +302,103 @@ static int zynq7000_cleanup(RIG *rig)
     RETURNFUNC2(RIG_OK);
 }
 
+/*
+* zynq7000_get_freq
+*/
+static int zynq7000_get_freq(RIG *rig, vfo_t vfo, freq_t *freq)
+{
+    ENTERFUNC;
+    int ptt = AD9851_GetOnOff(&dev_ad9851);
+    if(ptt == 0){
+        // -------------------- RX mode --------------------------------------------------
+        // Get freq according to AM/USB/LSB, dds_lo and dds_bfo
+        double freq_LO = DDS_GetFreq(&dev_dds_lo);
+        double freq_BFO = DDS_GetFreq(&dev_dds_bfo);
+        int amlsbusb = AMSSBSwitch_Get(&dev_am_ssb_switch);
+        switch(amlsbusb){
+        case 0:
+            // USB
+            *freq = freq_LO - freq_BFO;
+            break;
+        case 1:
+            // LSB
+            *freq = freq_LO + freq_BFO;
+            break;
+        case 2:
+            // AM
+            *freq = freq_LO;
+            break;
+        }
+
+        printf("zynq7000_get_freq: freq=%lf freq_LO=%lf freq_BFO=%lf\r\n", *freq, freq_LO, freq_BFO);
+
+    }else if(ptt == 1){
+        // -------------------- TX mode --------------------------------------------------
+        *freq = AD9851_GetFreq(&dev_ad9851);
+        printf("zynq7000_get_freq in TX: rig model=%s vfo=%d freq=%lf\r\n",rig->caps->model_name, vfo, *freq);
+    }
+
+    RETURNFUNC(RIG_OK);
+}
+
 
 /*
 * zynq7000_set_freq
-* assumes rig!=NULL, rig->state.priv!=NULL
+* in RX it sets dds_lo according to AM/USB/LSB and dds_bfo
+* in TX uses AD9851
 */
 static int zynq7000_set_freq(RIG *rig, vfo_t vfo, freq_t freq)
 {
-    //int retval;
-    char cmd[MAXARGLEN];
-    //char value[1024];
+    struct timeval stop, start;
+    gettimeofday(&start, NULL);
+    for(int i=0; i<1;i++){
 
-    //struct zynq7000_priv_data *priv = (struct zynq7000_priv_data *) rig->state.priv;
+    int ptt = AD9851_GetOnOff(&dev_ad9851);
 
-    rig_debug(RIG_DEBUG_TRACE, "%s\n", __func__);
-    rig_debug(RIG_DEBUG_TRACE, "%s: vfo=%s freq=%.0f\n", __func__,
-              rig_strvfo(vfo), freq);
+    if(ptt == 0){
+        // -------------------- RX mode --------------------------------------------------
+        // Turn off AD9851 output
+        AD9851_SetOff(&dev_ad9851);
 
-    if (check_vfo(vfo) == FALSE)
-    {
-        rig_debug(RIG_DEBUG_ERR, "%s: unsupported VFO %s\n",
-                  __func__, rig_strvfo(vfo));
-        RETURNFUNC2(-RIG_EINVAL);
+        // Set dds_lo and dds_bfo according to AM/USB/LSB
+        double freq_BFO = DDS_GetFreq(&dev_dds_bfo);
+        double freqLO = freq;                     // round the conversion from double to int
+
+        int amlsbusb = AMSSBSwitch_Get(&dev_am_ssb_switch);
+        switch(amlsbusb){
+            case 0: // USB
+                freqLO = freq + freq_BFO;
+                break;
+            case 1: // LSB
+                freqLO = freq - freq_BFO;
+                break;
+        }
+        int freqLO_int = 0.5 + freqLO;
+        DDS_SetFreq(&dev_dds_lo, freqLO_int);
+        //printf("zynq7000_set_freq in RX: rig model=%s vfo=%d freq=%lf freqLO=%lf freqLO_int=%d freqBFO=%lf\r\n",rig->caps->model_name, vfo, freq, freqLO, freqLO_int, freq_BFO);
+
+    }else if(ptt == 1){
+        // -------------------- TX mode --------------------------------------------------
+        // Turn on AD9851 output
+        AD9851_SetOn(&dev_ad9851);
+
+        AD9851_SetFreq(&dev_ad9851, freq);
+        //printf("zynq7000_set_freq in TX: rig model=%s vfo=%d freq=%lf\r\n",rig->caps->model_name, vfo, freq);
     }
 
-    if (vfo == RIG_VFO_CURR)
-    {
-        vfo = rig->state.current_vfo;
-    }
+    } // end for
 
-    SNPRINTF(cmd, sizeof(cmd), "F %.0lf\n", freq);
-
-    //retval = zynq7000_transaction(rig, cmd, value, sizeof(value));
-    rig_debug(RIG_DEBUG_TRACE,"zynq7000_set_freq: rig model=%s vfo=%d freq=%f\r\n",rig->caps->model_name, vfo, freq);
-    int ret = DDS_SetFreq(&dev_dds_lo, freq);
-    if (ret <= 0)
-    {
-        RETURNFUNC2(ret);
-    }
-
-    int freqBFO = rig->state.current_width ;
-    int freqLO = freq;
-
-    switch(rig->state.current_mode){
-        case RIG_MODE_USB:
-            freqLO = freq + freqBFO;
-            break;
-        case RIG_MODE_LSB:
-            freqLO = freq - freqBFO;
-            break;
-    }
-
-    DDS_SetFreq(&dev_dds_bfo, freqBFO);
-    rig_debug(RIG_DEBUG_TRACE,"zynq7000_set_freq: BFO frequency=%d\r\n", freqBFO);
-
-    DDS_SetFreq(&dev_dds_lo, freqLO);
-    rig_debug(RIG_DEBUG_TRACE,"zynq7000_set_freq: LO frequency=%d\r\n", freqLO);
-
-    //sscanf(value, "RPRT %d", &retval);
-    //RETURNFUNC2(retval);
+    gettimeofday(&stop, NULL);
+    printf("zynq7000_set_mode took %lu us\n", (stop.tv_sec - start.tv_sec) * 1000000 + stop.tv_usec - start.tv_usec);
     RETURNFUNC(RIG_OK);
 }
 
 static int zynq7000_set_mode(RIG *rig, vfo_t vfo, rmode_t mode, pbwidth_t width)
 {
-    struct zynq7000_priv_data *priv = (struct dummy_priv_data *)rig->state.priv;
-    //channel_t *curr = priv->curr;
-    char buf[16];
+    //struct zynq7000_priv_data *priv = (struct dummy_priv_data *)rig->state.priv;
+    printf("mode=%llu width=%ld\r\n", mode,width);
 
     ENTERFUNC;
-    usleep(CMDSLEEP);
-    sprintf_freq(buf, sizeof(buf), width);
-    rig_debug(RIG_DEBUG_VERBOSE, "%s called: %s %s %s\n", __func__,
-              rig_strvfo(vfo), rig_strrmode(mode), buf);
-
-/*
-    vfo = vfo_fixup(rig, vfo, rig->state.cache.split);
-
-    if (width == RIG_PASSBAND_NOCHANGE)
-    {
-            switch (vfo)
-            {
-            case RIG_VFO_MAIN:
-            case RIG_VFO_A: width = priv->vfo_a.width; break;
-
-            case RIG_VFO_SUB:
-            case RIG_VFO_B: width = priv->vfo_b.width; break;
-
-            case RIG_VFO_C: width = priv->vfo_c.width; break;
-            }
-    }
-
-    switch (vfo)
-    {
-    case RIG_VFO_MAIN:
-    case RIG_VFO_A: priv->vfo_a.mode = mode; priv->vfo_a.width = width; break;
-
-    case RIG_VFO_SUB:
-    case RIG_VFO_B: priv->vfo_b.mode = mode; priv->vfo_b.width = width; break;
-
-    case RIG_VFO_C: priv->vfo_c.mode = mode; priv->vfo_c.width = width; break;
-
-    default:
-            rig_debug(RIG_DEBUG_ERR, "%s: unknown VFO=%s\n", __func__, rig_strvfo(vfo));
-            RETURNFUNC(-RIG_EINVAL);
-    }
-
-    vfo = vfo_fixup(rig, vfo, rig->state.cache.split);
-
-    if (RIG_PASSBAND_NOCHANGE == width) { RETURNFUNC(RIG_OK); }
-
-    if (width == RIG_PASSBAND_NORMAL)
-    {
-            width = curr->width = rig_passband_normal(rig, mode);
-    }
-
-    switch (vfo)
-    {
-    case RIG_VFO_A: priv->vfo_a.width = width; break;
-
-    case RIG_VFO_B: priv->vfo_b.width = width; break;
-
-    case RIG_VFO_C: priv->vfo_c.width = width; break;
-    }
-*/
     // Set AM USB or LSB
     switch(mode){
     case RIG_MODE_AM:
@@ -611,12 +429,15 @@ static int zynq7000_set_mode(RIG *rig, vfo_t vfo, rmode_t mode, pbwidth_t width)
         width = 30000;
         DecimationRate_SetBandwidth(&dev_decimation_rate_iq,"30");
     }
-    priv->vfo_a.mode = mode;
-    priv->vfo_a.width = width;
+    //priv->vfo_a.mode = mode;
+    //priv->vfo_a.width = width;
+    if(mode == RIG_MODE_AM)
+        DDS_SetFreq(&dev_dds_bfo, 0);
+    else
+        DDS_SetFreq(&dev_dds_bfo, width);
 
     RETURNFUNC(RIG_OK);
 }
-
 
 static int zynq7000_get_mode(RIG *rig, vfo_t vfo, rmode_t *mode, pbwidth_t *width)
 {
@@ -626,8 +447,66 @@ static int zynq7000_get_mode(RIG *rig, vfo_t vfo, rmode_t *mode, pbwidth_t *widt
     usleep(CMDSLEEP);
     rig_debug(RIG_DEBUG_VERBOSE, "%s called: %s\n", __func__, rig_strvfo(vfo));
 
-    *mode = priv->vfo_a.mode;
-    *width = priv->vfo_a.width;
+    //*mode = priv->vfo_a.mode;
+    //*width = priv->vfo_a.width;
+
+    int amlsbusb = AMSSBSwitch_Get(&dev_am_ssb_switch);
+   switch(amlsbusb){
+    case 0:
+        *mode = RIG_MODE_USB;
+        break;
+    case 1:
+        *mode = RIG_MODE_LSB;
+        break;
+    case 2:
+        *mode = RIG_MODE_AM;
+        break;
+    }
+
+    char * bw = DecimationRate_GetBandwith(&dev_decimation_rate_iq);
+    printf("bw=%s\r\n", bw);
+    *width = 1000L * atol(bw);
+
+    RETURNFUNC(RIG_OK);
+}
+
+
+static int zynq7000_set_level(RIG *rig, vfo_t vfo, setting_t level, value_t val)
+{
+
+    switch(level){
+
+    case RIG_LEVEL_AF:
+        // Set the AF level at a value from 0.0 to 1.0
+        printf("zynq7000_set_level RIG=%s VFO=%d level(AF)=%d level_val=%f\r\n",rig->caps->model_name, level, val.f);
+        u_int8_t level_0_255 = 255 * val.f;
+        AD9851_SetAmplitude_0_255(&dev_ad9851, level_0_255);
+        break;
+
+    default:
+        printf("zynq7000_set_level RIG=%s VFO=%d level %d not implemented yet!\r\n",rig->caps->model_name, level);
+        break;
+    }
+
+    RETURNFUNC(RIG_OK);
+}
+
+
+static int zynq7000_get_level(RIG *rig, vfo_t vfo, setting_t level, value_t *val)
+{
+    u_int8_t level_0_255;
+
+    switch(level){
+        case RIG_LEVEL_AF:
+            // Get the AF level as a value from 0.0 to 1.0
+            AD9851_GetAmplitude_0_255(&dev_ad9851, & level_0_255);
+            val->f = level_0_255 / 255.0;
+            printf("zynq7000_get_level RIG=%s VFO=%d level(AF)=%d level_val=%f\r\n",rig->caps->model_name, level, val->f);
+            break;
+        default:
+            printf("zynq7000_get_level RIG=%s VFO=%d level %d not implemented yet!\r\n",rig->caps->model_name, level);
+            break;
+    }
 
     RETURNFUNC(RIG_OK);
 }
@@ -645,7 +524,7 @@ static int zynq7000_get_vfo(RIG *rig, vfo_t *vfo)
 
     *vfo = RIG_VFO_A;
 
-    printf("zynq7000_get_vfo: rig name=%s vfo=%d \r\n",rig->caps->model_name, vfo);
+    //printf("zynq7000_get_vfo: rig name=%s vfo=%d \r\n",rig->caps->model_name, vfo);
     RETURNFUNC(RIG_OK);
 }
 
@@ -723,11 +602,15 @@ static int zynq7000_set_ptt(RIG *rig, vfo_t vfo, ptt_t ptt)
     ENTERFUNC;
     priv->ptt = ptt;
 
-    printf("zynq7000_set_ptt: rig name=%s vfo=%d ptt=%d\r\n",rig->caps->model_name, vfo);
+    if(ptt == 1)
+        AD9851_SetOn(&dev_ad9851);
+    else
+        AD9851_SetOff(&dev_ad9851);
+
+    printf("zynq7000_set_ptt: rig name=%s vfo=%d ptt=%d\r\n",rig->caps->model_name, vfo,ptt);
 
     RETURNFUNC(RIG_OK);
 }
-
 
 static int zynq7000_get_ptt(RIG *rig, vfo_t vfo, ptt_t *ptt)
 {
@@ -736,174 +619,13 @@ static int zynq7000_get_ptt(RIG *rig, vfo_t vfo, ptt_t *ptt)
     int status = 0;
 
     ENTERFUNC;
-    usleep(CMDSLEEP);
 
-    // sneak a look at the hardware PTT and OR that in with our result
-    // as if it had keyed us
-    /*
-    switch (rig->state.pttport.type.ptt)
-    {
-    case RIG_PTT_SERIAL_DTR:
-        if (rig->state.pttport.fd >= 0)
-        {
-                if (RIG_OK != (rc = ser_get_dtr(&rig->state.pttport, &status))) { RETURNFUNC(rc); }
-
-                *ptt = status ? RIG_PTT_ON : RIG_PTT_OFF;
-        }
-        else
-        {
-                *ptt = RIG_PTT_OFF;
-        }
-
-        break;
-
-    case RIG_PTT_SERIAL_RTS:
-        if (rig->state.pttport.fd >= 0)
-        {
-                if (RIG_OK != (rc = ser_get_rts(&rig->state.pttport, &status))) { RETURNFUNC(rc); }
-
-                *ptt = status ? RIG_PTT_ON : RIG_PTT_OFF;
-        }
-        else
-        {
-                *ptt = RIG_PTT_OFF;
-        }
-
-        break;
-
-    case RIG_PTT_PARALLEL:
-        if (rig->state.pttport.fd >= 0)
-        {
-                if (RIG_OK != (rc = par_ptt_get(&rig->state.pttport, ptt))) { RETURNFUNC(rc); }
-        }
-
-        break;
-
-    case RIG_PTT_CM108:
-        if (rig->state.pttport.fd >= 0)
-        {
-                if (RIG_OK != (rc = cm108_ptt_get(&rig->state.pttport, ptt))) { RETURNFUNC(rc); }
-        }
-
-        break;
-
-    case RIG_PTT_GPIO:
-    case RIG_PTT_GPION:
-        if (rig->state.pttport.fd >= 0)
-        {
-                if (RIG_OK != (rc = gpio_ptt_get(&rig->state.pttport, ptt))) { RETURNFUNC(rc); }
-        }
-
-        break;
-
-    default:
-        *ptt = priv->ptt;
-        break;
-    }
-    */
-    *ptt = priv->ptt;
+    *ptt = AD9851_GetOnOff(&dev_ad9851);
 
     printf("zynq7000_get_ptt: rig name=%s vfo=%d ptt=%d\r\n",rig->caps->model_name, vfo, *ptt);
 
     RETURNFUNC(RIG_OK);
 }
-
-
-
-/*
-* zynq7000_init
-* Assumes rig!=NULL
-*/
-static int zynq7000_init(RIG *rig)
-{
-    struct zynq7000_priv_data *priv;
-
-    ENTERFUNC;
-    rig_debug(RIG_DEBUG_TRACE, "%s version %s\n", __func__, rig->caps->version);
-
-    rig->state.priv  = (struct zynq7000_priv_data *)calloc(1, sizeof(
-                                                                  struct zynq7000_priv_data));
-
-    if (!rig->state.priv)
-    {
-        RETURNFUNC(-RIG_ENOMEM);
-    }
-
-    priv = rig->state.priv;
-
-    memset(priv, 0, sizeof(struct zynq7000_priv_data));
-    memset(priv->parms, 0, RIG_SETTING_MAX * sizeof(value_t));
-
-    // set bandwidths
-    priv->nbandwidths = 4;
-    strcpy(priv->bandwidths, "2000|4000|8000|16000|30000");
-
-    /*
-     * set arbitrary initial status
-     */
-    rig->state.current_vfo = RIG_VFO_A;
-    priv->split = 0;
-    priv->ptt = 0;
-    priv->curr_modeA = -1;
-    priv->curr_modeB = -1;
-    //priv->curr_widthA = -1;
-    // set initial bandwith
-    priv->curr_widthA = 4000;
-    priv->curr_widthB = -1;
-    priv->curr_freqA = MHz(16);
-    priv->curr_vfo = 1;
-    priv->vfo_a.split = RIG_SPLIT_OFF;
-
-    // Init UIO devices
-    strcpy(dev_ad9851.uio.devuio, DEV_AD9851);
-    AD9851_Init(&dev_ad9851,180000000.0);
-
-    strcpy(dev_adc_test_switch.devuio, DEV_ADC_TEST_SWITCH);
-    ADCTestSwitch_Init(&dev_adc_test_switch);
-
-    strcpy(dev_am_ssb_switch.devuio, DEV_AM_SSB);
-    AMSSBSwitch_Init(&dev_am_ssb_switch);
-
-    strcpy(dev_dds_lo.uio.devuio, DEV_DDS_LO);
-    dev_dds_lo.b_phase_width = 26;
-    dev_dds_lo.master_clock_hz = 64000000;
-    DDS_Init(&dev_dds_lo);
-
-    strcpy(dev_dds_bfo.uio.devuio, DEV_DDS_BFO);
-    dev_dds_bfo.b_phase_width = 26;
-    dev_dds_bfo.master_clock_hz = 64000000;
-    DDS_Init(&dev_dds_bfo);
-
-    strcpy(dev_if_filter_gain.uio.devuio, DEV_IF_GAIN);
-    FilterGain_init(&dev_if_filter_gain);
-
-    strcpy(dev_decimation_rate_iq.uio.devuio, DEV_DEC_RATE_IQ);
-    DecimationRate_Init(&dev_decimation_rate_iq);
-
-    // set the initial mode to USB
-    AMSSBSwitch_SetUSB(&dev_am_ssb_switch);
-
-    // set the bandwidth to 4KHz
-    DecimationRate_SetBandwidth(&dev_decimation_rate_iq, "4");
-
-    // set the BFO to 4KHz
-    DDS_SetFreq(&dev_dds_bfo, 4000);
-
-
-    // set the initial frequency
-    zynq7000_set_freq(rig, priv->curr_vfo, priv->curr_freqA);
-
-    if (!rig->caps)
-    {
-        RETURNFUNC(-RIG_EINVAL);
-    }
-
-    //strncpy(rig->state.rigport.pathname, DEFAULTPATH,
-    //        sizeof(rig->state.rigport.pathname));
-
-    RETURNFUNC(RIG_OK);
-}
-
 
 struct rig_caps zynq7000_caps =
 {
@@ -915,8 +637,10 @@ struct rig_caps zynq7000_caps =
     .status = RIG_STATUS_STABLE,
     .rig_type = RIG_TYPE_COMPUTER,
     //.targetable_vfo =  RIG_TARGETABLE_FREQ | RIG_TARGETABLE_MODE,
-    .ptt_type = RIG_PTT_RIG,
+    .ptt_type = RIG_PTT_RIG_MICDATA,
     .port_type = RIG_PORT_NONE,
+    .has_get_level =  RIG_LEVEL_AF | RIG_LEVEL_RF,
+    .has_set_level =  RIG_LEVEL_SET(RIG_LEVEL_AF | RIG_LEVEL_RF),
     .write_delay = 0,
     .post_write_delay = 0,
     .timeout = 1000,
@@ -959,6 +683,9 @@ struct rig_caps zynq7000_caps =
 
     .set_ptt = zynq7000_set_ptt,
     .get_ptt = zynq7000_get_ptt,
+
+    .set_level = zynq7000_set_level,
+    .get_level = zynq7000_get_level,
 
     .hamlib_check_rig_caps = HAMLIB_CHECK_RIG_CAPS
 };

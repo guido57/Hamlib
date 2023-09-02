@@ -46,6 +46,8 @@ int AMSSBSwitch_Init(struct UIO * uio);
 void AMSSBSwitch_SetAM(struct UIO * uio);
 void AMSSBSwitch_SetUSB(struct UIO * uio);
 void AMSSBSwitch_SetLSB(struct UIO * uio);
+u_int32_t AMSSBSwitch_Get(struct UIO * uio);
+char * AMSSBSwitch_GetString(struct UIO * uio);
 
 // ---------------------- AD9851 --------------------------------------------
 //            b31 b30 b29 b28 b27 b26 b25 b24 b23 b22 b21 b20 b19 b18 b17   b16 b15 b14 b13 b12 b11 b10 b9 b8 b7 b6 b5 b4 b3 b2    b1  b0
@@ -63,11 +65,14 @@ struct AD9851
 
 int AD9851_Init(struct AD9851 * ad9851, float master_clock_hz_);
 float AD9851_SetFreq(struct AD9851 * ad9851, float freq_hz);
+float AD9851_GetFreq(struct AD9851 * ad9851);
 int AD9851_Set6X(struct AD9851 * ad9851);
 int AD9851_SetOn(struct AD9851 * ad9851);
 int AD9851_SetOff(struct AD9851 * ad9851);
+int AD9851_GetOnOff(struct AD9851 * ad9851); // 1=Power On 0=Power Off
 int AD9851_SetPhase_0_31(struct AD9851 * ad9851, u_int32_t phase_0_31);
-int AD9851_SetAmplitude_0_255(struct AD9851 * ad9851, u_int32_t amplitude_0_255);
+int AD9851_SetAmplitude_0_255(struct AD9851 * ad9851, u_int8_t amplitude_0_255);
+int AD9851_GetAmplitude_0_255(struct AD9851 * ad9851, u_int8_t * amplitude_0_255);
 // ---------------------- DDS --------------------------------------------
 struct DDS
 {
@@ -79,6 +84,7 @@ struct DDS
 
 int DDS_Init(struct DDS * dds);
 int DDS_SetFreq(struct DDS * dds, int freq_hz);
+int DDS_GetFreq(struct DDS * dds);
 
 
 struct DecimationRate

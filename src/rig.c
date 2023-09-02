@@ -3150,6 +3150,8 @@ int HAMLIB_API rig_set_ptt(RIG *rig, vfo_t vfo, ptt_t ptt)
 
     caps = rig->caps;
 
+    //printf("rig.c rig->state.pttport.type.ptt=%d\r\n",rig->state.pttport.type.ptt);
+
     LOCK(1);
 
     switch (rig->state.pttport.type.ptt)

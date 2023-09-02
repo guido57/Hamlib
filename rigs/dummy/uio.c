@@ -118,6 +118,22 @@ void ADCTestSwitch_SetTestGen(struct UIO * uio){
 int AMSSBSwitch_Init(struct UIO * uio) {
     return uio_init(uio);
 }
+char * AMSSBSwitch_GetString(struct UIO * uio){
+    u_int32_t amlsbusb = uio_readData32(uio, 0);
+    switch(amlsbusb){
+    case 0:
+        return "USB";
+    case 1:
+        return "LSB";
+    case 2:
+        return "AM";
+    }
+    return "";
+}
+u_int32_t AMSSBSwitch_Get(struct UIO * uio){
+    u_int32_t amlsbusb = uio_readData32(uio, 0);
+    return amlsbusb;
+}
 void AMSSBSwitch_SetAM(struct UIO * uio){
     uio_writeData32(uio, 0x00000002, 0);
 }
@@ -134,86 +150,138 @@ int AD9851_Init(struct AD9851 * ad9851, float master_clock_hz_){
     ad9851->master_clock_hz = master_clock_hz_;
     int ret_uio    = uio_init( &(ad9851->uio));
     int ret_6x     = AD9851_Set6X(ad9851);
-    int ret_setoff = AD9851_SetOff(ad9851);
-    int ret_freq   = AD9851_SetFreq(ad9851, 10000000.0); // 10MHz
-    int ret_phase  = AD9851_SetPhase_0_31(ad9851, 0);         // 0 phase shift
-    return ret_uio | (ret_6x << 1) | (ret_setoff << 2) | (ret_freq << 3) | (ret_phase << 4);
+
+    // set bit 1 to 0 at offset 8 bytes (2x32 bits words) which corresponds to bit 33 (always 0) on 40 bits ad9851 programming word
+    uint32_t write_instruction = 0xFFFFFFFD & uio_readData32(&(ad9851->uio),2);     // set bit 0 to 1
+    int ret_always_0 = uio_writeData32(&(ad9851->uio), write_instruction, 2);
+    if(ret_always_0 == 1)
+        printf("error setting always_0 bit on AD9851\r\n");
+
+    //int ret_setoff = AD9851_SetOff(ad9851);
+    //int ret_freq   = AD9851_SetFreq(ad9851, 10000000.0); // 10MHz
+    //int ret_phase  = AD9851_SetPhase_0_31(ad9851, 0);         // 0 phase shift
+    return ret_uio | (ret_6x << 1) | (ret_always_0 << 2);
 }
+
+int AD9851_SendValid(struct AD9851 * ad9851){
+    // set bit 16 (valid) to 1 and then back to 0 at offset 8
+    uint32_t write_instruction = 0x00010000 | uio_readData32(&(ad9851->uio),2);// set bit 16 to 1
+    int ret = uio_writeData32(&(ad9851->uio), write_instruction, 2);
+    if(ret == 1)
+        printf("error setting bit 16 (valid) to 1 on AD9851\r\n");
+    write_instruction = write_instruction & 0xFFFEFFFF;              // set bit 16 to 0
+    ret = uio_writeData32(&(ad9851->uio), write_instruction, 2);     // second: clear complete instruction
+    if(ret == 1)
+        printf("error setting bit 16 (valid) to 0 on AD9851\r\n");
+}
+
 
 float AD9851_SetFreq(struct AD9851 * ad9851, float freq_hz){
     //calculate phase increment from specified frequency
-    uint32_t pinc = (uint32_t) (0.5 + freq_hz * pow(2, 32) / ad9851->master_clock_hz );
+    uint32_t pinc = ( (freq_hz * pow(2, 32)) / ad9851->master_clock_hz );
+    //printf("AD9851_SetFreq: calculated pinc is %x\r\n",pinc);
 
     // send phase increment to AD9851
     int ret = uio_writeData32(&(ad9851->uio), pinc,0);
     if(ret == 1)
         printf("error writing frequency to AD9851\r\n");
 
-    // set bit 16 (valid) to 1 and then back to 0 at offset 8
-    uint32_t write_instruction = 0x00010000 | uio_readData32(&(ad9851->uio),8);     // set bit 16 to 1
-    ret = uio_writeData32(&(ad9851->uio), write_instruction, 8);
-    if(ret == 1)
-        printf("error setting bit 16 (valid) to 1 on AD9851\r\n");
-    write_instruction = write_instruction & 0xFFFFEFFF;                             // set bit 16 to 0
-    ret = uio_writeData32(&(ad9851->uio), write_instruction, 8);     // second: clear complete instruction
-    if(ret == 1)
-        printf("error setting bit 16 (valid) to 0 on AD9851\r\n");
+    AD9851_SendValid(ad9851);
 
     // recalculate real set frequency
-    ad9851->current_freq_hz = pinc * ad9851->master_clock_hz / pow(2,32);
+    ad9851->current_freq_hz = (pinc * ad9851->master_clock_hz) / pow(2,32);
     return ad9851->current_freq_hz;
 }
 
+float AD9851_GetFreq(struct AD9851 * ad9851){
+    // get phase increment from AD9851
+    uint32_t phase_inc = uio_readData32(&(ad9851->uio),0);
+    //calculate frequency from phase increment
+    ad9851->current_freq_hz = ((phase_inc * 1.0) * ad9851->master_clock_hz) / pow(2, 32);
+    //printf("AD9851_GetFreq: calculated pinc is %x=%f freq_hz=%f\r\n",phase_inc,1.0*phase_inc,ad9851->current_freq_hz);
+
+    return ad9851->current_freq_hz;
+}
+
+
 int AD9851_Set6X(struct AD9851 * ad9851){
 
-    // set bit 0 to 1 at offset 8 which corresponds to bit 32 (6X) on 40 bits ad9851 programming word
-    uint32_t write_instruction = 0x00000001 | uio_readData32(&(ad9851->uio),8);     // set bit 16 to 1
-    int ret = uio_writeData32(&(ad9851->uio), write_instruction, 8);
+    // set bit 0 to 1 at offset 8 bytes (2x32 bits words) which corresponds to bit 32 (6X) on 40 bits ad9851 programming word
+    uint32_t write_instruction = 0x00000001 | uio_readData32(&(ad9851->uio),2);     // set bit 0 to 1
+    int ret = uio_writeData32(&(ad9851->uio), write_instruction, 2);
     if(ret == 1)
         printf("error setting 6X bit on AD9851\r\n");
+
+    AD9851_SendValid(ad9851);
 
     return ret;
 }
 
 int AD9851_SetOn(struct AD9851 * ad9851){
 
-    // set bit 2 to 0 at offset 8 which corresponds to bit 34 (power down) on 40 bits ad9851 programming word
-    uint32_t write_instruction = 0xFFFFFFFB & uio_readData32(&(ad9851->uio),8);     // set bit 2 to 0
-    int ret = uio_writeData32(&(ad9851->uio), write_instruction, 8);
+    // set:
+    // bit 2 to 0 at offset 8 bytes (2x32 bits words) which corresponds to bit 34 (power down) on 40 bits ad9851 programming word
+    // bit 0 to 1 at offest 0 to set 6X to 1
+    uint32_t write_instruction = 0xFFFFFFFB & uio_readData32(&(ad9851->uio),2);     // set bit 2 to 0
+    write_instruction = 0x00000001 | write_instruction;     // set bit 0 to 1
+    int ret = uio_writeData32(&(ad9851->uio), write_instruction, 2);
     if(ret == 1)
         printf("error setting power down bit to 0 on AD9851\r\n");
+
+    AD9851_SendValid(ad9851);
+
+    // printf("power down bit to 0 on AD9851\r\n");
 
     return ret;
 }
 
 int AD9851_SetOff(struct AD9851 * ad9851){
 
-    // set bit 2 to 1 at offset 8 which corresponds to bit 34 (power down) on 40 bits ad9851 programming word
-    uint32_t write_instruction = 0x00000002 | uio_readData32(&(ad9851->uio),8);     // set bit 2 to 1
-    int ret = uio_writeData32(&(ad9851->uio), write_instruction, 8);
+    // set:
+    // bit 2 to 1 at offset 8 which corresponds to bit 34 (power down) on 40 bits ad9851 programming word
+    // bit 0 to 0 at offest 0 to set 6X to 0
+    uint32_t write_instruction = 0x00000004 | uio_readData32(&(ad9851->uio),2);     // set bit 2 to 1
+    write_instruction = 0xFFFFFFFE & write_instruction;     // set bit 0 to 0
+    int ret = uio_writeData32(&(ad9851->uio), write_instruction, 2);
     if(ret == 1)
         printf("error setting power down bit to 1 on AD9851\r\n");
 
+    AD9851_SendValid(ad9851);
+
+    // printf("power down bit to 1 on AD9851\r\n");
+
     return ret;
 }
+
+// return 1=Power On         0=Power Off
+int AD9851_GetOnOff(struct AD9851 * ad9851){
+
+    // get bit 2 at offset 8 bytes (2 words) which corresponds to bit 34 (power down) on 40 bits ad9851 programming word
+    uint32_t bitPowerOff = (0x00000004 & uio_readData32(&(ad9851->uio),2))>> 2;   // get bit 2 to 1
+
+    //printf("power down bit at %d on AD9851\r\n", bitPowerOff);
+
+    return bitPowerOff ^ 0x00000001;
+}
+
 
 int AD9851_SetPhase_0_31(struct AD9851 * ad9851, u_int32_t phase_0_31){
 
     // send phase shift to AD9851
     phase_0_31 = phase_0_31 & 0x0000001F; // 5 bits coding
-    uint32_t write_instruction = uio_readData32(&(ad9851->uio),8);     // set bit 16 to 1
+    uint32_t write_instruction = uio_readData32(&(ad9851->uio),2);     // set bit 16 to 1
     write_instruction = (write_instruction & 0xFFFFFFE0) | phase_0_31;
-    int ret = uio_writeData32(&(ad9851->uio), write_instruction,8);
+    int ret = uio_writeData32(&(ad9851->uio), write_instruction,2);
     if(ret == 1)
         printf("error writing phase shift to AD9851\r\n");
 
     // set bit 16 (valid) to 1 and then back to 0 at offset 8
-    write_instruction = 0x00010000 | uio_readData32(&(ad9851->uio),8);     // set bit 16 to 1
-    ret = uio_writeData32(&(ad9851->uio), write_instruction, 8);
+    write_instruction = 0x00010000 | uio_readData32(&(ad9851->uio),1);     // set bit 16 to 1
+    ret = uio_writeData32(&(ad9851->uio), write_instruction, 2);
     if(ret == 1)
         printf("error setting bit 16 (valid) to 0 on AD9851\r\n");
     write_instruction = write_instruction & 0xFFFEFFFF;                    // set bit 16 to 0
-    ret = uio_writeData32(&(ad9851->uio), write_instruction, 8);
+    ret = uio_writeData32(&(ad9851->uio), write_instruction, 2);
     if(ret == 1)
         printf("error setting bit 16 (valid) to 0 on AD9851\r\n");
 
@@ -222,17 +290,28 @@ int AD9851_SetPhase_0_31(struct AD9851 * ad9851, u_int32_t phase_0_31){
     return ad9851->phase_shift_0_31;
 }
 
-int AD9851_SetAmplitude_0_255(struct AD9851 * ad9851, u_int32_t amplitude_0_255){
+int AD9851_SetAmplitude_0_255(struct AD9851 * ad9851, u_int8_t amplitude_0_255){
 
-    // set amplitude for to AD9851. The AD9851_AM will output a PWM signal with duty cycle 0(0%)-255(100%)
-    amplitude_0_255 = amplitude_0_255 & 0x000000FF; // 8 bits coding
-    uint32_t write_instruction = uio_readData32(&(ad9851->uio),8);
-    write_instruction = (write_instruction & 0xFFFFFF00) | amplitude_0_255;
-    int ret = uio_writeData32(&(ad9851->uio), write_instruction,8);
+    // set amplitude of AD9851. The AD9851_AM will output a PWM signal with duty cycle 0(0%)-255(100%)
+    // in the AD9851 IP the amplitude is coded as u_int_8 at bits 15 ... 8 at offset 8 (third 32 bits register offset)
+
+    uint32_t write_instruction = uio_readData32(&(ad9851->uio),2);
+    write_instruction = (write_instruction & 0xFFFF00FF) | (((uint32_t) amplitude_0_255) << 8) ;
+    int ret = uio_writeData32(&(ad9851->uio), write_instruction,2);
     if(ret == 1)
-        printf("error writing PWM amplitude for AD9851\r\n");
+        printf("AD9851_SetAmplitude_0_255: error writing PWM amplitude for AD9851\r\n");
 
     return ret;
+}
+
+int AD9851_GetAmplitude_0_255(struct AD9851 * ad9851, u_int8_t * amplitude_0_255){
+
+    // get amplitude of AD9851. The AD9851_AM will output a PWM signal with duty cycle 0(0%)-255(100%)
+    // in the AD9851 IP the amplitude is coded as u_int_8 at bits 15 ... 8 at offset 8 bytes=1 (third 32 bits register offset)
+    uint32_t read_instruction = uio_readData32(&(ad9851->uio),2);
+    *amplitude_0_255 = (u_int8_t) (read_instruction >> 8); // 8 bits coding
+
+    return 0;
 }
 //********************************************************************
 // Manage a Direct Digital Synthesizer (Local Oscillator or Test Generator)
@@ -243,7 +322,7 @@ int DDS_Init(struct DDS * dds){
 
 int DDS_SetFreq(struct DDS * dds, int freq_hz){
     //calculate phase increment from specified frequency
-    uint32_t pinc =  freq_hz * pow(2, dds->b_phase_width) / dds->master_clock_hz ;
+    uint32_t pinc =  (( 0.5 + freq_hz) * pow(2, dds->b_phase_width)) / dds->master_clock_hz ; //
     // add valid bit to instruction
     uint32_t dds_instruction = 0x80000000 | pinc;
     // send instruction to DDS
@@ -257,14 +336,28 @@ int DDS_SetFreq(struct DDS * dds, int freq_hz){
     }
     // reset instruction
     uio_writeData32(&(dds->uio), pinc, 0);
-    uio_writeData32(&(dds->uio), 0x00000000, 0);     // second: clear complete instruction
+    //uio_writeData32(&(dds->uio), 0x00000000, 0);     // second: clear complete instruction
 
     if (timeout_counter <= 0){
         printf("DDS: error setting frequency %d on device %s\r\n\r\n", freq_hz, dds->uio.devuio);
         return -1;  // catch timeout
     }
     // recalculate real set frequency
-    dds->current_freq_hz = 0.5 + 1.0 * pinc * dds->master_clock_hz / pow(2,dds->b_phase_width);
+    dds->current_freq_hz = 0.5 + (1.0 * pinc * dds->master_clock_hz) / pow(2,dds->b_phase_width);
+    return dds->current_freq_hz;
+}
+
+int DDS_GetFreq(struct DDS * dds){
+    // read phase_increment from DDS
+    ulong phase_inc = uio_readData32(&(dds->uio), 0); // 64 bits
+
+    phase_inc = phase_inc & 0x7FFFFFFF;
+
+    //calculate specified frequency from phase increment
+    dds->current_freq_hz = 0.5 + (phase_inc * 1.0 * dds->master_clock_hz) / pow(2, dds->b_phase_width) ;
+
+    //printf("DDS_getFreq phase_inc=%x current_freq_hz=%d\r\n", phase_inc,dds->current_freq_hz);
+
     return dds->current_freq_hz;
 }
 
@@ -308,8 +401,6 @@ int DecimationRate_Init(struct DecimationRate * dr){
     return uio_init(&dr->uio);
 }
 
-
-
 //
 //   Set the Decimation Rate
 //   Any power of two between 4 and 8192 is allowed
@@ -329,7 +420,7 @@ int DecimationRate_set(struct DecimationRate * dr, uint32_t decrate){
 
     // reset instruction
     uio_writeData32(&dr->uio, dr->decimation_rate, 0);
-    uio_writeData32(&dr->uio,0x00000000, 0);     // second: clear complete instruction
+    //uio_writeData32(&dr->uio,0x00000000, 0);     // second: clear complete instruction
 
     if (timeout_counter <= 0){
         printf("DecimationRate: error setting decimation rate %d on device %s\r\n\r\n", dr->decimation_rate, dr->uio.devuio);
@@ -340,20 +431,30 @@ int DecimationRate_set(struct DecimationRate * dr, uint32_t decrate){
 }
 
 uint32_t DecimationRate_Get(struct DecimationRate * dr){
+    dr->decimation_rate = uio_readData32(&dr->uio, 0);
     return dr->decimation_rate;
 }
 
 char * DecimationRate_GetBandwith(struct DecimationRate * dr){
+    DecimationRate_Get(dr);
+    if(dr->decimation_rate <=0){
+        printf("uio.c DecimationRate_GetBandwith dr->decimation_rate is %d. Set it to 1024\r\n", dr->decimation_rate);
+        dr->decimation_rate = 1024;
+    }
     int exp2 = log(dr->decimation_rate)/log(2);
+    printf("decimation_rate=%d exp2=%d\r\n",dr->decimation_rate, exp2);
     return BW[exp2];
 }
 
 void DecimationRate_SetBandwidth(struct DecimationRate * dr, char * bandwidth){
     uint32_t dec_rate;
+    printf("uio.c DecimationRate_SetBandwith Bandwidth=%s\r\n", bandwidth);
+
     for(int i= 2; i<14;i++){
         if( strcmp(BW[i], bandwidth) == 0){
             dec_rate = pow(2,i);
             DecimationRate_set(dr, dec_rate);
+            printf("uio.c DecimationRate_SetBandwith found dec_rate=%d\r\n", dec_rate);
             return;
         }
     }

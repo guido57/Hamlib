@@ -442,19 +442,19 @@ char * DecimationRate_GetBandwith(struct DecimationRate * dr){
         dr->decimation_rate = 1024;
     }
     int exp2 = log(dr->decimation_rate)/log(2);
-    printf("decimation_rate=%d exp2=%d\r\n",dr->decimation_rate, exp2);
+    //printf("decimation_rate=%d exp2=%d\r\n",dr->decimation_rate, exp2);
     return BW[exp2];
 }
 
 void DecimationRate_SetBandwidth(struct DecimationRate * dr, char * bandwidth){
     uint32_t dec_rate;
-    printf("uio.c DecimationRate_SetBandwith Bandwidth=%s\r\n", bandwidth);
+    //printf("uio.c DecimationRate_SetBandwith Bandwidth=%s\r\n", bandwidth);
 
     for(int i= 2; i<14;i++){
         if( strcmp(BW[i], bandwidth) == 0){
             dec_rate = pow(2,i);
             DecimationRate_set(dr, dec_rate);
-            printf("uio.c DecimationRate_SetBandwith found dec_rate=%d\r\n", dec_rate);
+            //printf("uio.c DecimationRate_SetBandwith found dec_rate=%d\r\n", dec_rate);
             return;
         }
     }

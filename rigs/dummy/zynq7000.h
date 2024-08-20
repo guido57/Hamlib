@@ -34,4 +34,11 @@
 
 extern struct rig_caps zynq7000_caps;
 
+extern int zynq7000_set_freq(RIG *rig, vfo_t vfo, freq_t freq);
+extern HAMLIB_EXPORT(int) zynq7000_set_mode(RIG *rig, vfo_t vfo, rmode_t mode, pbwidth_t width);
+extern HAMLIB_EXPORT(int) zynq7000_set_level(RIG *rig, vfo_t vfo, setting_t level, value_t val);
+extern HAMLIB_EXPORT(int) zynq7000_set_ptt(RIG *rig, vfo_t vfo, ptt_t ptt);
+extern HAMLIB_EXPORT(int) zynq7000_get_ptt(RIG *rig, vfo_t vfo, ptt_t *ptt);
+
+
 #endif /* _ZYNQ7000_H */

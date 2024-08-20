@@ -211,7 +211,8 @@ HEADERS = \
    $$PWD/tests/ampctl_parse.h \
    $$PWD/tests/rigctl_parse.h \
    $$PWD/tests/rotctl_parse.h \
-   $$PWD/tests/uthash.h
+   $$PWD/tests/uthash.h \
+    rigs/dummy/uio_c.h
 
 SOURCES = \
    $$PWD/amplifiers/elecraft/kpa.c \

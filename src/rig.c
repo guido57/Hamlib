@@ -499,10 +499,13 @@ RIG *HAMLIB_API rig_init(rig_model_t rig_model)
     struct rig_state *rs;
     int i;
 
+    printf("rigctl: rig_init rig_check_rig_caps\r\n");
     rig_check_rig_caps();
 
+    printf("rigctl: rig_init rig_check_backend\r\n");
     rig_check_backend(rig_model);
 
+    printf("rigctl: rig_get_caps\r\n");
     caps = rig_get_caps(rig_model);
 
     if (!caps)

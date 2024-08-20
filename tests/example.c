@@ -75,7 +75,7 @@ int main()
 
         if (status != RIG_OK) { printf("set_vfo_opt failed?? Err=%s\n", rigerror(status)); }
     }
-
+    freq_t ff;
     /* Main VFO frequency */
     status = rig_get_freq(my_rig, RIG_VFO_CURR, &freq);
 

@@ -5,7 +5,7 @@
 #include <sys/types.h>
 #define uint32_t u_int32_t
 
-#define DEV_AD9851          "/dev/uio0"  //0x412A
+#define DEV_AD9851_GFSK     "/dev/uio0"  //0x4000
 #define DEV_ADC_TEST_SWITCH "/dev/uio1"  //0x4121
 #define DEV_DDS_TEST_GEN    "/dev/uio2"  //0x43C2
 #define DEV_DDS_LO_FT       "/dev/uio3"  //0x4126
@@ -14,7 +14,7 @@
 #define DEV_DEC_RATE_FT_IQ  "/dev/uio6"  //0x4124
 #define DEV_FT_CAPTURE      "/dev/uio7"  //0x43C1
 #define DEV_IF_GAIN         "/dev/uio8"  //0x4122
-#define DEV_DEC_RATE_IQ     "/dev/uio9"  //0x43C3
+#define DEV_DEC_RATE_IQ     "/dev/uio9" //0x43C3
 #define DEV_HDMI_GPIO       "/dev/uio10" //0x4120
 #define DEV_PS2_MOUSE_RESET "/dev/uio11" //0x4127
 #define DEV_AM_SSB          "/dev/uio12" //0x4125
@@ -61,6 +61,8 @@ struct AD9851
     float master_clock_hz;
     float current_freq_hz;
     int phase_shift_0_31;
+    //int gfsk_counter;  // count the steps to go from last_freq_hz to current_freq_hz
+    //int am_counter;    // count the steps to go from 0 to max amplitude
 };
 
 int AD9851_Init(struct AD9851 * ad9851, float master_clock_hz_);

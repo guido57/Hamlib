@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE QtCreatorProject>
-<!-- Written by QtCreator 10.0.2, 2023-09-01T09:26:54. -->
+<!-- Written by QtCreator 10.0.2, 2024-08-20T15:56:01. -->
 <qtcreator>
  <data>
   <variable>EnvironmentId</variable>
@@ -249,7 +249,6 @@
     </valuemap>
     <value type="int" key="ProjectExplorer.BuildConfiguration.BuildStepListCount">1</value>
     <valuemap type="QVariantMap" key="ProjectExplorer.DeployConfiguration.CustomData">
-     <value type="QString" key="/home/guido/Github/Hamlib/src/.libs/libhamlib.so.4">/usr/lib</value>
      <value type="QString" key="/home/guido/Github/Hamlib/src/.libs/libhamlib.so.4.0.6">/usr/lib</value>
      <value type="QString" key="/home/guido/Github/Hamlib/tests/.libs/rigctl">/home/ebaz/Hamlib</value>
     </valuemap>
